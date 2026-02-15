@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <%- include('partials/head', { title: 'Dashboard' }) %>
+</head>
+<body class="bg-stone-100 min-h-screen font-sans text-stone-800">
+
+<div class="flex">
+  <%- include('partials/sidebar', { active: 'dashboard' }) %>
+
+  <main class="flex-1 p-8">
+    <div class="max-w-6xl mx-auto">
+      <h1 class="text-3xl font-bold text-stone-900 mb-2">Dashboard</h1>
+      <p class="text-stone-500 mb-8">Visão geral dos pedidos e faturamento.</p>
+
+      <!-- Métricas -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-white rounded-2xl shadow-sm border border-stone-200/80 p-6">
+          <p class="text-stone-500 text-sm font-medium mb-1">Total de pedidos</p>
+          <p class="text-3xl font-bold text-amber-600 mt-1"><%= totais.total || 0 %></p>
+        </div>
+        <div class="bg-white rounded-2xl shadow-sm border border-stone-200/80 p-6">
+          <p class="text-stone-500 text-sm font-medium mb-1">Faturamento</p>
+          <p class="text-3xl font-bold text-green-600 mt-1">R$ <%= Number(totais.faturamento || 0).toFixed(2) %></p>
+        </div>
+        <div class="bg-white rounded-2xl shadow-sm border border-stone-200/80 p-6">
+          <p class="text-stone-500 text-sm font-medium mb-1">Pendentes</p>
+          <p class="text-3xl font-bold text-blue-600 mt-1"><%= totais.pendentes || 0 %></p>
+        </div>
+      </div>
+
+      <!-- Últimos pedidos -->
+      <div class="bg-white rounded-2xl shadow-sm border border-stone-200/80 overflow-hidden">
+        <div class="px-6 py-4 border-b border-stone-100 flex flex-wrap items-center justify-between gap-4">
+          <h2 class="text-lg font-semibold text-stone-800">Últimos pedidos</h2>
+          <a href="/admin/pedidos" class="text-amber-600 hover:text-amber-700 font-medium text-sm flex items-center gap-1">
+            Ver todos os pedidos →
+          </a>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead>
+              <tr class="bg-stone-50 border-b border-stone-200">
+                <th class="text-left py-4 px-6 text-sm font-semibold text-stone-600">#</th>
+                <th class="text-left py-4 px-6 text-sm font-semibold text-stone-600">Cliente</th>
+                <th class="text-left py-4 px-6 text-sm font-semibold text-stone-600">Itens</th>
+                <th class="text-left py-4 px-6 text-sm font-semibold text-stone-600">Total</th>
+                <th class="text-left py-4 px-6 text-sm font-semibold text-stone-600">Status</th>
+                <th class="text-left py-4 px-6 text-sm font-semibold text-stone-600">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% pedidos.forEach(p => { %>
+                <tr class="border-b border-stone-100 hover:bg-amber-50/30 transition">
+                  <td class="py-4 px-6 font-mono text-stone-500">#<%= p.id %></td>
+                  <td class="py-4 px-6"><%= p.telefone || '—' %></td>
+                  <td class="py-4 px-6 text-sm max-w-xs">
+                    <% if (p.itens && p.itens.length) { %>
+                      <ul class="space-y-0.5">
+                        <% p.itens.forEach(i => { %>
+                          <li><%= i.nome_item %> ×<%= i.quantidade %></li>
+                        <% }); %>
+                      </ul>
+                    <% } else { %>—<% } %>
+                  </td>
+                  <td class="py-4 px-6 font-semibold text-green-700">R$ <%= Number(p.total || 0).toFixed(2) %></td>
+                  <td class="py-4 px-6">
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium
+                      <%= p.status === 'novo' ? 'bg-amber-100 text-amber-800' :
+                          p.status === 'em_preparo' ? 'bg-blue-100 text-blue-800' :
+                          p.status === 'finalizado' || p.status === 'entregue' ? 'bg-green-100 text-green-800' :
+                          p.status === 'cancelado' ? 'bg-stone-200 text-stone-600' : 'bg-stone-100 text-stone-700' %>">
+                      <%= p.status %>
+                    </span>
+                  </td>
+                  <td class="py-4 px-6">
+                    <form method="POST" action="/admin/pedido/<%= p.id %>/status" class="flex items-center gap-2">
+                      <select name="status" class="border border-stone-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500/30">
+                        <option value="novo" <%= p.status === 'novo' ? 'selected' : '' %>>Novo</option>
+                        <option value="em_preparo" <%= p.status === 'em_preparo' ? 'selected' : '' %>>Em preparo</option>
+                        <option value="finalizado" <%= p.status === 'finalizado' ? 'selected' : '' %>>Finalizado</option>
+                        <option value="entregue" <%= p.status === 'entregue' ? 'selected' : '' %>>Entregue</option>
+                        <option value="cancelado" <%= p.status === 'cancelado' ? 'selected' : '' %>>Cancelado</option>
+                      </select>
+                      <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white text-sm px-3 py-1.5 rounded-lg font-medium transition">Ok</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+        <% if (pedidos.length === 0) { %>
+          <div class="py-12 text-center text-stone-500">Nenhum pedido ainda.</div>
+        <% } %>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  var ultimoTotal = <%= totais.total || 0 %>;
+  setInterval(async function() {
+    try {
+      var res = await fetch('/admin/pedidos-count');
+      var data = await res.json();
+      if (data.count > ultimoTotal) {
+        var audio = new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3");
+        audio.play().catch(function() {});
+        location.reload();
+      }
+      ultimoTotal = data.count;
+    } catch (_) {}
+  }, 5000);
+</script>
+
+</body>
+</html>

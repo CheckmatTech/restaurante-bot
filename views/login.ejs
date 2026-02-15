@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Painel Gerente</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { theme: { extend: { fontFamily: { sans: ['DM Sans', 'system-ui', 'sans-serif'] } } } };</script>
+</head>
+<body class="bg-stone-100 min-h-screen flex items-center justify-center p-4 font-sans">
+
+  <div class="bg-white rounded-2xl shadow-xl border border-stone-200/80 p-8 w-full max-w-md">
+    <div class="text-center mb-8">
+      <h1 class="text-2xl font-bold text-stone-900">Restaurante</h1>
+      <p class="text-stone-500 text-sm mt-1">Painel do gerente</p>
+    </div>
+
+    <% if (typeof error !== 'undefined' && error) { %>
+      <div class="mb-6 p-4 rounded-xl bg-red-50 border border-red-100 text-red-700 text-sm">
+        <%= error %>
+      </div>
+    <% } %>
+
+    <form method="post" action="/admin/login" class="space-y-5">
+      <div>
+        <label class="block text-sm font-medium text-stone-600 mb-1.5">E-mail</label>
+        <input name="email" type="email" placeholder="seu@email.com" required
+          class="w-full border border-stone-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-stone-600 mb-1.5">Senha</label>
+        <input name="password" type="password" placeholder="••••••••" required
+          class="w-full border border-stone-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500">
+      </div>
+      <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-2.5 rounded-xl transition shadow-sm">
+        Entrar
+      </button>
+    </form>
+  </div>
+
+</body>
+</html>
