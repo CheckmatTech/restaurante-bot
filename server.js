@@ -5,7 +5,7 @@ const session = require('express-session');
 const bcrypt = require('bcrypt');
 const pool = require('./db');
 const { twiml: { MessagingResponse } } = require('twilio');
-const { gerarRespostaAgente } = require('./agente');
+const { gerarRespostaAgente, detectarIntent } = require('./agente');
 
 const app = express();
 
@@ -20,6 +20,9 @@ app.use(session({
 
 app.set('view engine', 'ejs');
 
+app.get('/', (req, res) => {
+  res.redirect('/admin');
+});
 
 // ============================
 // 🤖 WHATSAPP BOT - FLUXO CONVERSA
@@ -49,6 +52,11 @@ function naoQuerBebida(msg) {
 // Verifica se confirmou o pedido
 function confirmouPedido(msg) {
   return /\b(sim|est[aá] certo|correto|confirmo|pode ser)\b/i.test(msg) && !/\b(n[aã]o|nao)\b/i.test(msg);
+}
+
+// Verifica se quer cancelar / encerrar sem pedir
+function querCancelarOuSair(msg) {
+  return /\b(n[aã]o\s*quero|obrigad[oa]\s*(ate|até)|ate\s*a\s*proxima|até\s*a\s*pr[oó]xima|cancelar|sair|deixa\s*pra\s*l[aá]|desistir|parar)\b/i.test(msg);
 }
 
 // Envia resposta: tenta o agente de IA primeiro, senão usa o texto fixo
@@ -101,7 +109,8 @@ app.post('/whatsapp', async (req, res) => {
 
     // ---------- Cliente pediu para ver cardápio → mostrar PRATOS ----------
     else if (clienteData.etapa === 'aguardando_cardapio') {
-      if (!querVerCardapio(mensagemLower)) {
+      const querVer = querVerCardapio(mensagemLower) || (await detectarIntent('aguardando_cardapio', mensagem)) === 'QUER_VER_CARDAPIO';
+      if (!querVer) {
         await responder(twiml, {
           etapa: 'aguardando_querer_cardapio',
           mensagemCliente: mensagem,
@@ -130,10 +139,40 @@ app.post('/whatsapp', async (req, res) => {
       );
     }
 
-    // ---------- Escolhendo PRATOS (pode mandar vários números ou "pronto") ----------
+    // ---------- Escolhendo PRATOS (pode mandar vários números, "pronto", cancelar ou ver cardápio de novo) ----------
     else if (clienteData.etapa === 'escolhendo_pratos') {
 
-      if (terminouPratos(mensagemLower)) {
+      const intentPratos = await detectarIntent('escolhendo_pratos', mensagem);
+
+      if (querCancelarOuSair(mensagemLower) || intentPratos === 'CANCELAR') {
+        await responder(twiml, {
+          etapa: 'cliente_desistiu',
+          mensagemCliente: mensagem,
+          contexto: 'Cliente desistiu do pedido ou quis encerrar. Despeça-se com educação e diga que pode mandar oi quando quiser.',
+        }, "Tudo bem! Quando quiser, é só mandar *oi*. Até a próxima! 👋");
+        await pool.query('UPDATE clientes SET etapa=$1 WHERE id=$2', ['inicio', clienteData.id]);
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        return res.end(twiml.toString());
+      }
+
+      if (intentPratos === 'VER_CARDAPIO') {
+        const pratos = await pool.query(
+          "SELECT id, nome, preco FROM cardapio WHERE ativo=true AND (categoria='prato' OR categoria IS NULL) ORDER BY id"
+        );
+        const listaPratos = pratos.rows.map(p =>
+          `${p.id} - ${p.nome} - R$ ${Number(p.preco).toFixed(2)}`
+        ).join('\n');
+        await responder(twiml, {
+          etapa: 'mostrando_cardapio_pratos',
+          mensagemCliente: mensagem,
+          contexto: 'Cliente pediu para ver o cardápio de novo. Mostre a lista de pratos novamente.',
+          dados: { listaPratos },
+        }, `🍽️ *CARDÁPIO - PRATOS*\n\n${listaPratos}\n\nDigite os *números* dos pratos que deseja (ex: 1 2 ou 1 e 2). Quando terminar, digite *pronto*.`);
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        return res.end(twiml.toString());
+      }
+
+      if (terminouPratos(mensagemLower) || intentPratos === 'PRONTO') {
         const pedidoAtual = await pool.query(
           `SELECT id FROM pedidos WHERE cliente_id=$1 AND status='montando' ORDER BY criado_em DESC LIMIT 1`,
           [clienteData.id]
@@ -175,7 +214,7 @@ app.post('/whatsapp', async (req, res) => {
           etapa: 'escolhendo_pratos_aguardando_numeros',
           mensagemCliente: mensagem,
           contexto: 'Cliente está escolhendo pratos mas não enviou números. Oriente de forma amigável.',
-        }, "Digite os números dos pratos (ex: 1 2 3) ou *pronto* quando terminar.");
+        }, "Digite os *números* dos pratos (ex: 1 2 3), *pronto* quando terminar, ou peça para *ver o cardápio* de novo.");
         res.writeHead(200, { 'Content-Type': 'text/xml' });
         return res.end(twiml.toString());
       }
@@ -220,10 +259,29 @@ app.post('/whatsapp', async (req, res) => {
       }, `Adicionei: ${nomes}.\n\nQuer mais algum prato? Digite os números ou *pronto* para ir para as bebidas.`);
     }
 
-    // ---------- Escolhendo BEBIDAS ou "não quero" / "pronto" ----------
+    // ---------- Escolhendo BEBIDAS ou "não quero" / "pronto" / ver cardápio de novo ----------
     else if (clienteData.etapa === 'escolhendo_bebidas') {
 
-      const querConfirmar = naoQuerBebida(mensagemLower) || terminouPratos(mensagemLower);
+      const intentBebidas = await detectarIntent('escolhendo_bebidas', mensagem);
+      const querConfirmar = naoQuerBebida(mensagemLower) || terminouPratos(mensagemLower) || intentBebidas === 'NAO_QUERO_BEBIDA';
+
+      if (intentBebidas === 'VER_CARDAPIO') {
+        const bebidas = await pool.query(
+          "SELECT id, nome, preco FROM cardapio WHERE ativo=true AND categoria='bebida' ORDER BY id"
+        );
+        const listaBebidas = bebidas.rows.length
+          ? bebidas.rows.map(b => `${b.id} - ${b.nome} - R$ ${Number(b.preco).toFixed(2)}`).join('\n')
+          : 'Nenhuma bebida no momento.';
+        await responder(twiml, {
+          etapa: 'mostrando_cardapio_bebidas',
+          mensagemCliente: mensagem,
+          contexto: 'Cliente pediu para ver o cardápio de bebidas de novo.',
+          dados: { listaBebidas },
+        }, `🥤 *CARDÁPIO - BEBIDAS*\n\n${listaBebidas}\n\nDigite os números das bebidas ou *não* se não quiser.`);
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        return res.end(twiml.toString());
+      }
+
       if (querConfirmar) {
         const pedido = await pool.query(
           `SELECT id FROM pedidos WHERE cliente_id=$1 AND status='montando' ORDER BY criado_em DESC LIMIT 1`,
@@ -322,7 +380,11 @@ app.post('/whatsapp', async (req, res) => {
     // ---------- Confirmando pedido (está certo?) ----------
     else if (clienteData.etapa === 'confirmando_pedido') {
 
-      if (confirmouPedido(mensagemLower)) {
+      const intentConfirma = await detectarIntent('confirmando_pedido', mensagem);
+      const confirmou = confirmouPedido(mensagemLower) || intentConfirma === 'CONFIRMAR_SIM';
+      const naoConfirmou = intentConfirma === 'CONFIRMAR_NAO';
+
+      if (confirmou) {
         await responder(twiml, {
           etapa: 'pedir_forma_pagamento',
           mensagemCliente: mensagem,
@@ -333,7 +395,7 @@ app.post('/whatsapp', async (req, res) => {
           'UPDATE clientes SET etapa=$1 WHERE id=$2',
           ['pagamento', clienteData.id]
         );
-      } else {
+      } else if (naoConfirmou) {
         await responder(twiml, {
           etapa: 'pedido_cancelado',
           mensagemCliente: mensagem,
@@ -343,16 +405,23 @@ app.post('/whatsapp', async (req, res) => {
           'UPDATE clientes SET etapa=$1 WHERE id=$2',
           ['inicio', clienteData.id]
         );
+      } else {
+        await responder(twiml, {
+          etapa: 'confirmando_pedido_duvida',
+          mensagemCliente: mensagem,
+          contexto: 'Cliente não respondeu sim ou não. Pergunte novamente se o pedido está certo.',
+        }, "O pedido está certo? Responda *sim* ou *não*.");
       }
     }
 
     // ---------- Pagamento → mensagem final + comanda ----------
     else if (clienteData.etapa === 'pagamento') {
 
+      const intentPag = await detectarIntent('pagamento', mensagem);
       let forma = null;
-      if (mensagemLower === '1' || /pix/i.test(mensagemLower)) forma = 'Pix';
-      else if (mensagemLower === '2' || /dinheiro/i.test(mensagemLower)) forma = 'Dinheiro';
-      else if (mensagemLower === '3' || /cart[aã]o/i.test(mensagemLower)) forma = 'Cartão';
+      if (mensagemLower === '1' || /pix/i.test(mensagemLower) || intentPag === 'PAGAMENTO_PIX') forma = 'Pix';
+      else if (mensagemLower === '2' || /dinheiro/i.test(mensagemLower) || intentPag === 'PAGAMENTO_DINHEIRO') forma = 'Dinheiro';
+      else if (mensagemLower === '3' || /cart[aã]o/i.test(mensagemLower) || intentPag === 'PAGAMENTO_CARTAO') forma = 'Cartão';
 
       if (!forma) {
         twiml.message("Opção inválida. Escolha 1 (Pix), 2 (Dinheiro) ou 3 (Cartão).");
@@ -599,21 +668,29 @@ app.get('/admin/pedidos', auth, async (req, res) => {
 app.get('/admin/cardapio', auth, async (req, res) => {
 
   const itens = await pool.query('SELECT * FROM cardapio ORDER BY id');
+  const erro = req.query.erro === 'nome_duplicado' ? 'Já existe um item com esse nome. Use outro nome ou edite o existente.' : null;
 
-  res.render('cardapio', { itens: itens.rows });
+  res.render('cardapio', { itens: itens.rows, erro });
 });
 
 app.post('/admin/cardapio/add', auth, async (req, res) => {
 
   const categoria = (req.body.categoria || 'prato').toLowerCase();
   const ativo = req.body.ativo === 'on' || req.body.ativo === 'true';
+  const nome = (req.body.nome || '').trim();
 
-  await pool.query(
-    'INSERT INTO cardapio (nome, descricao, preco, categoria, ativo) VALUES ($1,$2,$3,$4,$5)',
-    [req.body.nome?.trim(), req.body.descricao?.trim() || null, parseFloat(req.body.preco) || 0, categoria, ativo]
-  );
-
-  res.redirect('/admin/cardapio');
+  try {
+    await pool.query(
+      'INSERT INTO cardapio (nome, descricao, preco, categoria, ativo) VALUES ($1,$2,$3,$4,$5)',
+      [nome, req.body.descricao?.trim() || null, parseFloat(req.body.preco) || 0, categoria, ativo]
+    );
+    res.redirect('/admin/cardapio');
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.redirect('/admin/cardapio?erro=nome_duplicado');
+    }
+    throw err;
+  }
 });
 
 app.get('/admin/cardapio/editar/:id', auth, async (req, res) => {
